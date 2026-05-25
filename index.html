@@ -102,12 +102,12 @@
     <div id="viewer"></div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/clmtrackr@1.1.2/build/clmtrackr.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/clmtrackr@1.1.2/models/model_pca_20_svm.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/numeric/1.2.6/numeric.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/delaunator@5.0.0/delaunator.min.js"></script>
-  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="./vendor/clmtrackr.min.js"></script>
+  <script src="./vendor/model_pca_20_svm.js"></script>
+  <script src="./vendor/numeric.min.js"></script>
+  <script src="./vendor/delaunator.min.js"></script>
+  <script src="./vendor/three.min.js"></script>
+  <script src="./vendor/OrbitControls.js"></script>
 
   <script>
     const MAX_CAPTURE_FRAMES = 90;
@@ -152,11 +152,19 @@
         tracker.start(video);
 
         captureBtn.disabled = false;
-        reconstructBtn.disabled = false;
+        reconstructBtn.disabled = true;
         status('Camera started. Capture sequence to collect facial landmarks.');
         runOverlayLoop();
       } catch (error) {
-        status(`Unable to access camera: ${error.message}`);
+        if (error.name === 'NotAllowedError') {
+          status('Camera permission denied. Please allow camera access and retry.');
+        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+          status('No camera device found. Please connect a camera and retry.');
+        } else if (error.name === 'NotReadableError') {
+          status('Camera is already in use by another application.');
+        } else {
+          status(`Unable to access camera: ${error.message}`);
+        }
       }
     }
 
@@ -175,6 +183,7 @@
               status(`Capturing sequence... ${capturedFrames.length}/${MAX_CAPTURE_FRAMES}`);
               if (capturedFrames.length >= MAX_CAPTURE_FRAMES) {
                 captureActive = false;
+                reconstructBtn.disabled = false;
                 status(`Capture complete (${capturedFrames.length} frames). Click Reconstruct 3D.`);
               }
             }
@@ -192,6 +201,7 @@
       }
       capturedFrames = [];
       captureActive = true;
+      reconstructBtn.disabled = true;
       status('Capture started. Keep your face visible and slowly rotate your head.');
     }
 
@@ -237,7 +247,8 @@
       let svd;
       try {
         svd = numeric.svd(measurement);
-      } catch (_error) {
+      } catch (error) {
+        console.error('SVD reconstruction failed:', error);
         return null;
       }
 

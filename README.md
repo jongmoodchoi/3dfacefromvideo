@@ -16,7 +16,7 @@ This repository now contains a deployable static web app that:
 Because camera APIs require a secure context, run via `localhost`:
 
 ```bash
-cd /tmp/workspace/jongmoodchoi/3dfacefromvideo
+cd <PROJECT_DIRECTORY>
 python3 -m http.server 8080
 ```
 
