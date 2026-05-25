@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>3D Face From Video (Classical CV)</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Arial, sans-serif;
+    }
+    body {
+      margin: 0;
+      background: #10131a;
+      color: #f5f7ff;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 16px;
+      min-height: 100vh;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .panel {
+      background: #171c26;
+      border: 1px solid #2d3647;
+      border-radius: 12px;
+      padding: 12px;
+    }
+    #videoWrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4/3;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    video, canvas.overlay {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      object-fit: cover;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    button {
+      border: 1px solid #475673;
+      background: #243047;
+      color: #f5f7ff;
+      padding: 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #2c3b57;
+    }
+    #status {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #b6c4de;
+      line-height: 1.4;
+    }
+    #viewer {
+      width: 100%;
+      height: calc(100vh - 32px);
+      min-height: 460px;
+      border-radius: 12px;
+      border: 1px solid #2d3647;
+      overflow: hidden;
+      background: #05070d;
+    }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      #viewer { height: 55vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <section class="panel">
+      <h2>3D Face From Camera</h2>
+      <p>Pipeline: camera video → classical facial landmark tracking (CLM) → Tomasi-Kanade factorization (SVD) → interactive 3D mesh.</p>
+      <div id="videoWrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay" class="overlay"></canvas>
+      </div>
+      <div class="controls">
+        <button id="startBtn">Start Camera</button>
+        <button id="captureBtn" disabled>Capture Sequence</button>
+        <button id="reconstructBtn" disabled>Reconstruct 3D</button>
+        <button id="resetBtn">Reset</button>
+      </div>
+      <p id="status">Ready. Start camera to begin.</p>
+    </section>
+    <div id="viewer"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/clmtrackr@1.1.2/build/clmtrackr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/clmtrackr@1.1.2/models/model_pca_20_svm.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/numeric/1.2.6/numeric.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/delaunator@5.0.0/delaunator.min.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+
+  <script>
+    const MAX_CAPTURE_FRAMES = 90;
+    const MIN_CAPTURE_FRAMES = 10;
+
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const overlayCtx = overlay.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+    const captureBtn = document.getElementById('captureBtn');
+    const reconstructBtn = document.getElementById('reconstructBtn');
+    const resetBtn = document.getElementById('resetBtn');
+
+    let tracker = null;
+    let captureActive = false;
+    let capturedFrames = [];
+    let animationHandle = null;
+
+    const viewer = initViewer(document.getElementById('viewer'));
+
+    startBtn.addEventListener('click', startCamera);
+    captureBtn.addEventListener('click', startCapture);
+    reconstructBtn.addEventListener('click', reconstructAndRender);
+    resetBtn.addEventListener('click', resetAll);
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = stream;
+        await video.play();
+
+        overlay.width = video.videoWidth || 640;
+        overlay.height = video.videoHeight || 480;
+
+        if (tracker) {
+          tracker.stop();
+        }
+
+        tracker = new clm.tracker({ searchWindow: 11 });
+        tracker.init();
+        tracker.start(video);
+
+        captureBtn.disabled = false;
+        reconstructBtn.disabled = false;
+        status('Camera started. Capture sequence to collect facial landmarks.');
+        runOverlayLoop();
+      } catch (error) {
+        status(`Unable to access camera: ${error.message}`);
+      }
+    }
+
+    function runOverlayLoop() {
+      if (animationHandle) {
+        cancelAnimationFrame(animationHandle);
+      }
+      const tick = () => {
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        if (tracker) {
+          tracker.draw(overlay);
+          if (captureActive) {
+            const points = tracker.getCurrentPosition();
+            if (points && points.length) {
+              capturedFrames.push(points.map((p) => [p[0], p[1]]));
+              status(`Capturing sequence... ${capturedFrames.length}/${MAX_CAPTURE_FRAMES}`);
+              if (capturedFrames.length >= MAX_CAPTURE_FRAMES) {
+                captureActive = false;
+                status(`Capture complete (${capturedFrames.length} frames). Click Reconstruct 3D.`);
+              }
+            }
+          }
+        }
+        animationHandle = requestAnimationFrame(tick);
+      };
+      tick();
+    }
+
+    function startCapture() {
+      if (!tracker) {
+        status('Start camera first.');
+        return;
+      }
+      capturedFrames = [];
+      captureActive = true;
+      status('Capture started. Keep your face visible and slowly rotate your head.');
+    }
+
+    function reconstructAndRender() {
+      if (capturedFrames.length < MIN_CAPTURE_FRAMES) {
+        status(`Need at least ${MIN_CAPTURE_FRAMES} captured frames before reconstruction.`);
+        return;
+      }
+
+      const shape = reconstructShape(capturedFrames);
+      if (!shape) {
+        status('Reconstruction failed. Try capturing again with better lighting and motion.');
+        return;
+      }
+
+      viewer.renderShape(shape);
+      status(`3D face reconstructed with ${shape.length} vertices. Use mouse to rotate/zoom.`);
+    }
+
+    function reconstructShape(frames) {
+      const sampleCount = Math.min(frames.length, 40);
+      const step = Math.max(1, Math.floor(frames.length / sampleCount));
+      const sampled = [];
+      for (let i = 0; i < frames.length; i += step) {
+        sampled.push(frames[i]);
+      }
+
+      const pointCount = Math.min(...sampled.map((f) => f.length));
+      if (pointCount < 20 || sampled.length < MIN_CAPTURE_FRAMES) {
+        return null;
+      }
+
+      const measurement = [];
+      for (const frame of sampled) {
+        const xs = frame.slice(0, pointCount).map((p) => p[0]);
+        const ys = frame.slice(0, pointCount).map((p) => p[1]);
+        const mx = xs.reduce((a, b) => a + b, 0) / pointCount;
+        const my = ys.reduce((a, b) => a + b, 0) / pointCount;
+        measurement.push(xs.map((x) => x - mx));
+        measurement.push(ys.map((y) => y - my));
+      }
+
+      let svd;
+      try {
+        svd = numeric.svd(measurement);
+      } catch (_error) {
+        return null;
+      }
+
+      if (!svd.S || svd.S.length < 3) {
+        return null;
+      }
+
+      const sRoot = [Math.sqrt(svd.S[0]), Math.sqrt(svd.S[1]), Math.sqrt(svd.S[2])];
+      const vTop = svd.V.map((row) => [row[0], row[1], row[2]]);
+      const shapeRaw = [
+        vTop.map((row) => row[0] * sRoot[0]),
+        vTop.map((row) => row[1] * sRoot[1]),
+        vTop.map((row) => row[2] * sRoot[2])
+      ];
+
+      const points = [];
+      for (let i = 0; i < pointCount; i++) {
+        points.push([shapeRaw[0][i], -shapeRaw[1][i], -shapeRaw[2][i]]);
+      }
+
+      const center = [0, 0, 0];
+      for (const p of points) {
+        center[0] += p[0];
+        center[1] += p[1];
+        center[2] += p[2];
+      }
+      center[0] /= points.length;
+      center[1] /= points.length;
+      center[2] /= points.length;
+
+      let maxR = 0;
+      for (const p of points) {
+        p[0] -= center[0];
+        p[1] -= center[1];
+        p[2] -= center[2];
+        maxR = Math.max(maxR, Math.hypot(p[0], p[1], p[2]));
+      }
+
+      if (maxR === 0) {
+        return null;
+      }
+
+      return points.map((p) => [p[0] / maxR, p[1] / maxR, p[2] / maxR]);
+    }
+
+    function initViewer(container) {
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x05070d);
+
+      const camera = new THREE.PerspectiveCamera(55, container.clientWidth / container.clientHeight, 0.01, 50);
+      camera.position.set(0, 0, 2.2);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.minDistance = 0.5;
+      controls.maxDistance = 5;
+
+      const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+      const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+      directional.position.set(0.8, 1, 1.5);
+      scene.add(ambient, directional);
+
+      let currentMesh = null;
+      let currentPoints = null;
+
+      function renderShape(shape) {
+        if (currentMesh) scene.remove(currentMesh);
+        if (currentPoints) scene.remove(currentPoints);
+
+        const verts = shape.map((p) => [p[0], p[1]]);
+        const delaunay = Delaunator.from(verts);
+
+        const positions = new Float32Array(shape.length * 3);
+        shape.forEach((p, i) => {
+          positions[i * 3 + 0] = p[0];
+          positions[i * 3 + 1] = p[1];
+          positions[i * 3 + 2] = p[2];
+        });
+
+        const meshGeometry = new THREE.BufferGeometry();
+        meshGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        meshGeometry.setIndex(Array.from(delaunay.triangles));
+        meshGeometry.computeVertexNormals();
+
+        const meshMaterial = new THREE.MeshStandardMaterial({
+          color: 0x9bc5ff,
+          metalness: 0.05,
+          roughness: 0.85,
+          side: THREE.DoubleSide
+        });
+
+        currentMesh = new THREE.Mesh(meshGeometry, meshMaterial);
+
+        const ptsGeometry = new THREE.BufferGeometry();
+        ptsGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const ptsMaterial = new THREE.PointsMaterial({ color: 0x0a0f17, size: 0.018 });
+        currentPoints = new THREE.Points(ptsGeometry, ptsMaterial);
+
+        scene.add(currentMesh, currentPoints);
+      }
+
+      function animate() {
+        controls.update();
+        renderer.render(scene, camera);
+        requestAnimationFrame(animate);
+      }
+      animate();
+
+      window.addEventListener('resize', () => {
+        const { clientWidth, clientHeight } = container;
+        camera.aspect = clientWidth / clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(clientWidth, clientHeight);
+      });
+
+      return { renderShape };
+    }
+
+    function resetAll() {
+      captureActive = false;
+      capturedFrames = [];
+      status('Reset complete. Capture a new sequence when ready.');
+    }
+
+    function status(message) {
+      statusEl.textContent = message;
+    }
+  </script>
+</body>
+</html>
