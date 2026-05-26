@@ -263,7 +263,7 @@
       antialias: true,
       alpha: true,
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111621);
@@ -358,18 +358,29 @@
     }
 
     function clear3D() {
+      const sharedGeometry = mesh && points && mesh.geometry === points.geometry;
+      const sharedGeometryRef = sharedGeometry ? mesh.geometry : null;
+
       if (mesh) {
-        mesh.geometry.dispose();
+        if (!sharedGeometry) {
+          mesh.geometry.dispose();
+        }
         mesh.material.map?.dispose();
         mesh.material.dispose();
         group.remove(mesh);
         mesh = null;
       }
       if (points) {
-        points.geometry.dispose();
+        if (!sharedGeometry) {
+          points.geometry.dispose();
+        }
         points.material.dispose();
         group.remove(points);
         points = null;
+      }
+
+      if (sharedGeometry) {
+        sharedGeometryRef.dispose();
       }
     }
 
@@ -546,7 +557,7 @@
       );
 
       points = new THREE.Points(
-        geometry.clone(),
+        geometry,
         new THREE.PointsMaterial({
           color: 0x7fd0ff,
           size: 0.006,
