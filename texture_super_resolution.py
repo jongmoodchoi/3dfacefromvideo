@@ -59,6 +59,13 @@ def normalize_illumination(image: np.ndarray, reference: np.ndarray) -> np.ndarr
     return np.clip(normalized, 0, 255)
 
 
+def compute_softmax_weights(scores: np.ndarray) -> np.ndarray:
+    shifted = scores - np.max(scores)
+    temperature = max(float(np.std(scores)), 0.1)
+    exp_scores = np.exp(shifted / temperature)
+    return exp_scores / (np.sum(exp_scores) + 1e-6)
+
+
 def robust_fusion(frames: Sequence[np.ndarray], weights: np.ndarray) -> np.ndarray:
     stack = np.stack(frames, axis=0)  # [N,H,W,C]
     median = np.median(stack, axis=0, keepdims=True)
@@ -92,9 +99,7 @@ def enhance_texture(
     ref = chosen[0]
     normalized = [normalize_illumination(img, ref) for img in chosen]
 
-    w = chosen_scores - np.max(chosen_scores)
-    w = np.exp(w / (np.std(chosen_scores) + 1e-6))
-    w = w / (np.sum(w) + 1e-6)
+    w = compute_softmax_weights(chosen_scores)
 
     fused = robust_fusion(normalized, w)
     fused_pil = Image.fromarray(np.clip(fused, 0, 255).astype(np.uint8), mode="RGB")
@@ -107,7 +112,7 @@ def enhance_texture(
 
     # Unsharp mask for light detail recovery.
     radius = 1.0
-    percent = int(max(0.0, detail_strength) * 100)
+    percent = min(500, int(max(0.0, detail_strength) * 100))
     fused_pil = fused_pil.filter(ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=3))
 
     return np.asarray(fused_pil, dtype=np.uint8)

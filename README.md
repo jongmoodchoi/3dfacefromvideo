@@ -23,13 +23,13 @@ multiple facial frames into a cleaner high-resolution texture image.
 ### Usage
 
 ```bash
-pip install -r /absolute/path/to/requirements.txt
+pip install -r requirements.txt
 ```
 
 ```bash
 python3 texture_super_resolution.py \
-  --input-dir /absolute/path/to/faces \
-  --output /absolute/path/to/texture_sr.png \
+  --input-dir ./faces \
+  --output ./output/texture_sr.png \
   --top-k 10 \
   --scale 2
 ```
