@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Face Texture Super Resolution</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #111;
+        color: #eee;
+      }
+      .container {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .panel {
+        background: #1b1b1b;
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 16px;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      label {
+        font-size: 13px;
+      }
+      button {
+        background: #4f80ff;
+        color: white;
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 14px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #preview {
+        margin-top: 16px;
+        max-width: 100%;
+        border: 1px solid #444;
+      }
+      .hint {
+        color: #aaa;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>3D Face Texture 고해상도 보강</h1>
+      <p class="hint">
+        여러 얼굴 프레임을 업로드하고 고해상도 텍스처를 생성합니다. 기존 3D 메시에 연동하려면
+        <code>window.faceMesh</code>를 설정하세요.
+      </p>
+      <div class="panel">
+        <div class="row">
+          <label>
+            Frames
+            <input id="frames" type="file" accept="image/*" multiple />
+          </label>
+          <label>
+            Top-K
+            <input id="topk" type="number" value="10" min="1" />
+          </label>
+          <label>
+            Scale
+            <input id="scale" type="number" value="2" min="1" />
+          </label>
+          <label>
+            Detail strength
+            <input id="detail" type="number" value="1.2" min="0" step="0.1" />
+          </label>
+          <button id="run">텍스처 생성 + 메시 적용</button>
+          <button id="download" disabled>결과 다운로드</button>
+        </div>
+        <div id="status" class="hint"></div>
+        <canvas id="preview"></canvas>
+      </div>
+    </div>
+
+    <script type="module">
+      import {
+        applyEnhancedTextureToFace,
+        enhanceTextureFromFrames,
+      } from "./web_texture_enhancer.js";
+
+      const framesInput = document.getElementById("frames");
+      const topKInput = document.getElementById("topk");
+      const scaleInput = document.getElementById("scale");
+      const detailInput = document.getElementById("detail");
+      const runButton = document.getElementById("run");
+      const downloadButton = document.getElementById("download");
+      const status = document.getElementById("status");
+      const preview = document.getElementById("preview");
+      const previewCtx = preview.getContext("2d");
+
+      let enhancedCanvas = null;
+
+      function setStatus(text) {
+        status.textContent = text;
+      }
+
+      function drawPreview(canvas) {
+        preview.width = canvas.width;
+        preview.height = canvas.height;
+        previewCtx.drawImage(canvas, 0, 0);
+      }
+
+      runButton.addEventListener("click", async () => {
+        if (!framesInput.files.length) {
+          setStatus("이미지를 먼저 선택하세요.");
+          return;
+        }
+        runButton.disabled = true;
+        downloadButton.disabled = true;
+        setStatus("고해상도 텍스처 생성 중...");
+        try {
+          const frames = Array.from(framesInput.files);
+          const opts = {
+            frames,
+            topK: Number(topKInput.value) || 10,
+            scale: Number(scaleInput.value) || 2,
+            detailStrength: Number(detailInput.value) || 1.2,
+          };
+
+          if (window.faceMesh) {
+            const result = await applyEnhancedTextureToFace({
+              ...opts,
+              faceMesh: window.faceMesh,
+            });
+            enhancedCanvas = result.enhancedCanvas;
+            setStatus("텍스처 생성 및 3D 메시 적용 완료");
+          } else {
+            enhancedCanvas = await enhanceTextureFromFrames(opts);
+            setStatus("텍스처 생성 완료 (window.faceMesh가 없어 미리보기만 표시)");
+          }
+          drawPreview(enhancedCanvas);
+          downloadButton.disabled = false;
+        } catch (error) {
+          setStatus(`오류: ${error.message}`);
+        } finally {
+          runButton.disabled = false;
+        }
+      });
+
+      downloadButton.addEventListener("click", async () => {
+        if (!enhancedCanvas) {
+          return;
+        }
+        const blob = await new Promise((resolve) => enhancedCanvas.convertToBlob
+          ? enhancedCanvas.convertToBlob({ type: "image/png" }).then(resolve)
+          : enhancedCanvas.toBlob(resolve, "image/png"));
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "texture_sr.png";
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    </script>
+  </body>
+</html>
